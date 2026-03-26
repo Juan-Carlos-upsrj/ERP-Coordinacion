@@ -1,0 +1,11 @@
+RewriteEngine On
+
+# Evita listar directorios
+Options -Indexes
+
+# Si el request no es un archivo ni un directorio real, mandala a index.php
+# Excluir explícitamente la carpeta de descarga
+RewriteCond %{REQUEST_URI} !^/coordinacion/descarga/.*$
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php?v=$1 [L,QSA]
