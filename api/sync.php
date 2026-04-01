@@ -117,8 +117,9 @@ try {
                         if (isset($materia_cache[$m_name])) {
                             $m_id = $materia_cache[$m_name];
                         } else {
-                            $stmtFind = $pdo->prepare("SELECT id FROM hor_materias WHERE nombre = ? AND carrera_id = ? LIMIT 1");
-                            $stmtFind->execute([$m_name, $carrera_id]);
+                            // Búsqueda case-insensitive para que 'Animación 3D' encuentre 'ANIMACIÓN 3D'
+                            $stmtFind = $pdo->prepare("SELECT id FROM hor_materias WHERE (nombre = ? OR LOWER(nombre) = LOWER(?)) AND carrera_id = ? LIMIT 1");
+                            $stmtFind->execute([$m_name, $m_name, $carrera_id]);
                             $found = $stmtFind->fetchColumn();
                             $m_id = $found ?: '0';
                             $materia_cache[$m_name] = $m_id;
@@ -132,15 +133,23 @@ try {
                             ':mid' => $m_id
                         ]);
                     } else {
-                        $stmtDel->execute([
+                        // Mejorado: Búsqueda de borrado robusta
+                        $stmtDelExact = $pdo->prepare("DELETE FROM asistencia_clases WHERE alumno_id = :aid AND fecha = :f AND materia_nombre = :mn");
+                        $stmtDelExact->execute([
                             ':aid' => $reg['alumno_id'] ?? '0',
                             ':f'   => $reg['fecha'],
                             ':mn'  => $m_name
                         ]);
                     }
 
+                    $prof_nombre_final = $reg['profesor_nombre'] ?? 'Desconocido';
+                    // Auto-fix para Juan Francisco Zamora Flores
+                    if (stripos($prof_nombre_final, 'Zamora') !== false) {
+                        $prof_nombre_final = 'Juan Francisco Zamora Flores';
+                    }
+
                     $params = [
-                        ':pn'  => $reg['profesor_nombre'] ?? 'Desconocido',
+                        ':pn'  => $prof_nombre_final,
                         ':gn'  => $reg['grupo_nombre'] ?? 'Sin Grupo',
                         ':mn'  => $m_name,
                         ':aid' => $reg['alumno_id'] ?? '0',
@@ -165,11 +174,12 @@ try {
         }
     }
 
-    // --- CASO 2: GET ASISTENCIAS ---
+    // --- CASO 2: GET ASISTENCIAS (Case-Insensitive) ---
     if ($action === 'get-asistencias') {
         $profesor = $input['profesor_nombre'] ?? '';
-        $sql = "SELECT alumno_id, alumno_nombre, grupo_nombre, materia_nombre, fecha, status 
-                FROM asistencia_clases WHERE profesor_nombre = ? ORDER BY fecha DESC LIMIT 2000";
+        // Usamos LOWER para que coincida sin importar mayúsculas/minúsculas
+        $sql = "SELECT alumno_id, alumno_nombre, grupo_id, grupo_nombre, materia_id, materia_nombre, fecha, status 
+                FROM asistencia_clases WHERE LOWER(profesor_nombre) = LOWER(?) ORDER BY fecha DESC LIMIT 2000";
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$profesor]);
         echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()]);
@@ -183,6 +193,9 @@ try {
         
         $has_cid = in_array('carrera_id', $existing_cols);
         $has_mid = in_array('materia_id', $existing_cols);
+        
+        // La migración de base de datos se maneja ahora en un script independiente: migrate_grades.php
+        $idx_col = $has_mid ? 'materia_id' : 'materia_nombre';
 
         $pdo->beginTransaction();
         try {
@@ -209,8 +222,12 @@ try {
                     ':am'  => $reg['alumno_matricula'] ?? '',
                     ':en'  => $reg['evaluacion_nombre'] ?? '',
                     ':p'   => $reg['parcial'] ?? 1,
-                    ':c'   => $reg['calificacion'] ?? 0
+                    ':c'   => (float)($reg['calificacion'] ?? 0)
                 ];
+                // Escala automática 0-10 (Si viene 85 -> 8.5)
+                if ($params[':c'] > 10) {
+                    $params[':c'] = $params[':c'] / 10.0;
+                }
                 if ($has_cid) $params[':cid'] = $carrera_id;
                 if ($has_mid) $params[':mid'] = $reg['materia_id'] ?? '0';
 
